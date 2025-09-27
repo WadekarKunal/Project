@@ -3,18 +3,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom'
 import { format } from 'date-fns'
 import axios from 'axios'
 import toast from 'react-hot-toast'
-import { 
-  ArrowLeft, 
-  Edit, 
-  Trash2, 
-  Calendar, 
-  User, 
-  Clock,
-  CheckCircle,
-  Circle,
-  PlayCircle,
-  AlertCircle
-} from 'lucide-react'
+import { ArrowLeft, CreditCard as Edit, Trash2, Calendar, User, Clock, CircleCheck as CheckCircle, Circle, CirclePlay as PlayCircle, CircleAlert as AlertCircle } from 'lucide-react'
 import LoadingSpinner from '../components/LoadingSpinner'
 import { useAuth } from '../contexts/AuthContext'
 

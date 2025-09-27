@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { useAuth } from '../contexts/AuthContext'
-import { CheckSquare, Eye, EyeOff } from 'lucide-react'
+import { SquareCheck as CheckSquare, Eye, EyeOff } from 'lucide-react'
 
 const Register = () => {
   const [showPassword, setShowPassword] = useState(false)

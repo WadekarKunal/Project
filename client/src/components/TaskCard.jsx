@@ -1,16 +1,7 @@
 import React from 'react'
 import { Link } from 'react-router-dom'
 import { format } from 'date-fns'
-import { 
-  Calendar, 
-  User, 
-  Edit, 
-  Trash2, 
-  Clock,
-  CheckCircle,
-  Circle,
-  PlayCircle
-} from 'lucide-react'
+import { Calendar, User, CreditCard as Edit, Trash2, Clock, CircleCheck as CheckCircle, Circle, CirclePlay as PlayCircle } from 'lucide-react'
 
 const TaskCard = ({ task, onStatusChange, onDelete, showActions = true }) => {
   const getPriorityColor = (priority) => {

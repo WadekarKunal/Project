@@ -2,15 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import axios from 'axios'
 import { useAuth } from '../contexts/AuthContext'
-import { 
-  CheckSquare, 
-  Clock, 
-  AlertCircle, 
-  Users, 
-  Plus,
-  TrendingUp,
-  Calendar
-} from 'lucide-react'
+import { SquareCheck as CheckSquare, Clock, CircleAlert as AlertCircle, Users, Plus, TrendingUp, Calendar } from 'lucide-react'
 import LoadingSpinner from '../components/LoadingSpinner'
 import TaskCard from '../components/TaskCard'
 

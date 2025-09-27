@@ -2,12 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import axios from 'axios'
 import toast from 'react-hot-toast'
-import { 
-  Plus, 
-  Search, 
-  Filter,
-  X
-} from 'lucide-react'
+import { Plus, Search, ListFilter as Filter, X } from 'lucide-react'
 import LoadingSpinner from '../components/LoadingSpinner'
 import TaskCard from '../components/TaskCard'
 import Pagination from '../components/Pagination'
