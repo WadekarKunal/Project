@@ -1,5 +1,6 @@
 const express = require('express');
 const { query, validationResult } = require('express-validator');
+const mongoose = require('mongoose');
 const { User } = require('../models');
 const { authenticate, requireAdmin } = require('../middleware/auth');
 
@@ -21,23 +22,27 @@ router.get('/', [
       });
     }
 
-    const whereClause = {};
+    const query = {};
     
     // Filter by active status if provided
     if (req.query.active !== undefined) {
-      whereClause.isActive = req.query.active === 'true';
+      query.isActive = req.query.active === 'true';
     } else {
       // Default to active users only
-      whereClause.isActive = true;
+      query.isActive = true;
     }
 
-    const users = await User.findAll({
-      where: whereClause,
-      attributes: ['id', 'firstName', 'lastName', 'email', 'role', 'createdAt'],
-      order: [['firstName', 'ASC'], ['lastName', 'ASC']]
-    });
+    const users = await User.find(query)
+      .select('firstName lastName email role createdAt isActive')
+      .sort({ firstName: 1, lastName: 1 });
 
-    res.json({ users });
+    // Transform users to include id field for frontend compatibility
+    const transformedUsers = users.map(user => ({
+      ...user.toObject(),
+      id: user._id
+    }));
+
+    res.json({ users: transformedUsers });
   } catch (error) {
     console.error('Get users error:', error);
     res.status(500).json({ message: 'Server error while fetching users' });
@@ -49,15 +54,24 @@ router.get('/', [
 // @access  Private (Admin only)
 router.get('/:id', [authenticate, requireAdmin], async (req, res) => {
   try {
-    const user = await User.findByPk(req.params.id, {
-      attributes: ['id', 'firstName', 'lastName', 'email', 'role', 'isActive', 'createdAt', 'updatedAt']
-    });
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ message: 'Invalid user ID' });
+    }
+
+    const user = await User.findById(req.params.id)
+      .select('firstName lastName email role isActive createdAt updatedAt');
 
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    res.json({ user });
+    // Transform user to include id field for frontend compatibility
+    const transformedUser = {
+      ...user.toObject(),
+      id: user._id
+    };
+
+    res.json({ user: transformedUser });
   } catch (error) {
     console.error('Get user error:', error);
     res.status(500).json({ message: 'Server error while fetching user' });
@@ -75,22 +89,27 @@ router.patch('/:id/status', [authenticate, requireAdmin], async (req, res) => {
       return res.status(400).json({ message: 'isActive must be a boolean' });
     }
 
-    const user = await User.findByPk(req.params.id);
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ message: 'Invalid user ID' });
+    }
+
+    const user = await User.findById(req.params.id);
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
 
     // Prevent admin from deactivating themselves
-    if (user.id === req.user.id && !isActive) {
+    if (user._id.toString() === req.user._id.toString() && !isActive) {
       return res.status(400).json({ message: 'You cannot deactivate your own account' });
     }
 
-    await user.update({ isActive });
+    user.isActive = isActive;
+    await user.save();
 
     res.json({
       message: `User ${isActive ? 'activated' : 'deactivated'} successfully`,
       user: {
-        id: user.id,
+        id: user._id,
         firstName: user.firstName,
         lastName: user.lastName,
         email: user.email,

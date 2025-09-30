@@ -11,7 +11,7 @@ const authenticate = async (req, res, next) => {
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findByPk(decoded.id);
+    const user = await User.findById(decoded.id);
     
     if (!user || !user.isActive) {
       return res.status(401).json({ message: 'Invalid token or user not active.' });
@@ -37,7 +37,7 @@ const requireOwnershipOrAdmin = (userIdField = 'userId') => {
   return (req, res, next) => {
     const resourceUserId = req.params[userIdField] || req.body[userIdField];
     
-    if (req.user.role === 'admin' || req.user.id === resourceUserId) {
+    if (req.user.role === 'admin' || req.user._id.toString() === resourceUserId) {
       return next();
     }
     

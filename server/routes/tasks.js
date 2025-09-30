@@ -1,6 +1,6 @@
 const express = require('express');
 const { body, query, validationResult } = require('express-validator');
-const { Op } = require('sequelize');
+const mongoose = require('mongoose');
 const { Task, User } = require('../models');
 const { authenticate, requireAdmin } = require('../middleware/auth');
 
@@ -15,7 +15,7 @@ router.get('/', [
   query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
   query('status').optional().isIn(['pending', 'in-progress', 'completed']).withMessage('Invalid status'),
   query('priority').optional().isIn(['low', 'medium', 'high']).withMessage('Invalid priority'),
-  query('assignedUserId').optional().isUUID().withMessage('Invalid user ID'),
+  query('assignedUserId').optional().isMongoId().withMessage('Invalid user ID'),
   query('search').optional().isLength({ min: 1, max: 100 }).withMessage('Search term must be 1-100 characters')
 ], async (req, res) => {
   try {
@@ -29,66 +29,65 @@ router.get('/', [
 
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
-    const offset = (page - 1) * limit;
+    const skip = (page - 1) * limit;
 
-    // Build where clause for filtering
-    const whereClause = {};
+    // Build query object for filtering
+    const query = {};
     
     if (req.query.status) {
-      whereClause.status = req.query.status;
+      query.status = req.query.status;
     }
     
     if (req.query.priority) {
-      whereClause.priority = req.query.priority;
+      query.priority = req.query.priority;
     }
     
     if (req.query.assignedUserId) {
-      whereClause.assignedUserId = req.query.assignedUserId;
+      query.assignedUserId = req.query.assignedUserId;
     }
 
     // Search functionality
     if (req.query.search) {
-      whereClause[Op.or] = [
-        { title: { [Op.iLike]: `%${req.query.search}%` } },
-        { description: { [Op.iLike]: `%${req.query.search}%` } }
+      query.$or = [
+        { title: { $regex: req.query.search, $options: 'i' } },
+        { description: { $regex: req.query.search, $options: 'i' } }
       ];
     }
 
     // Non-admin users can only see their assigned tasks or tasks they created
     if (req.user.role !== 'admin') {
-      whereClause[Op.or] = [
-        { assignedUserId: req.user.id },
-        { createdBy: req.user.id }
+      query.$or = [
+        { assignedUserId: req.user._id },
+        { createdBy: req.user._id }
       ];
     }
 
-    const { count, rows: tasks } = await Task.findAndCountAll({
-      where: whereClause,
-      include: [
-        {
-          model: User,
-          as: 'assignedUser',
-          attributes: ['id', 'firstName', 'lastName', 'email']
-        },
-        {
-          model: User,
-          as: 'creator',
-          attributes: ['id', 'firstName', 'lastName', 'email']
-        }
-      ],
-      order: [['createdAt', 'DESC']],
-      limit,
-      offset
-    });
+    const [tasks, totalCount] = await Promise.all([
+      Task.find(query)
+        .populate('assignedUserId', 'firstName lastName email')
+        .populate('createdBy', 'firstName lastName email')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      Task.countDocuments(query)
+    ]);
 
-    const totalPages = Math.ceil(count / limit);
+    // Transform the populated data to match frontend expectations
+    const transformedTasks = tasks.map(task => ({
+      ...task.toObject(),
+      assignedUser: task.assignedUserId,
+      creator: task.createdBy,
+      id: task._id
+    }));
+
+    const totalPages = Math.ceil(totalCount / limit);
 
     res.json({
-      tasks,
+      tasks: transformedTasks,
       pagination: {
         currentPage: page,
         totalPages,
-        totalItems: count,
+        totalItems: totalCount,
         itemsPerPage: limit,
         hasNextPage: page < totalPages,
         hasPrevPage: page > 1
@@ -105,20 +104,13 @@ router.get('/', [
 // @access  Private
 router.get('/:id', authenticate, async (req, res) => {
   try {
-    const task = await Task.findByPk(req.params.id, {
-      include: [
-        {
-          model: User,
-          as: 'assignedUser',
-          attributes: ['id', 'firstName', 'lastName', 'email']
-        },
-        {
-          model: User,
-          as: 'creator',
-          attributes: ['id', 'firstName', 'lastName', 'email']
-        }
-      ]
-    });
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ message: 'Invalid task ID' });
+    }
+
+    const task = await Task.findById(req.params.id)
+      .populate('assignedUserId', 'firstName lastName email')
+      .populate('createdBy', 'firstName lastName email');
 
     if (!task) {
       return res.status(404).json({ message: 'Task not found' });
@@ -126,12 +118,20 @@ router.get('/:id', authenticate, async (req, res) => {
 
     // Check if user has access to this task
     if (req.user.role !== 'admin' && 
-        task.assignedUserId !== req.user.id && 
-        task.createdBy !== req.user.id) {
+        (!task.assignedUserId || task.assignedUserId._id.toString() !== req.user._id.toString()) && 
+        task.createdBy._id.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: 'Access denied' });
     }
 
-    res.json({ task });
+    // Transform the populated data to match frontend expectations
+    const transformedTask = {
+      ...task.toObject(),
+      assignedUser: task.assignedUserId,
+      creator: task.createdBy,
+      id: task._id
+    };
+
+    res.json({ task: transformedTask });
   } catch (error) {
     console.error('Get task error:', error);
     res.status(500).json({ message: 'Server error while fetching task' });
@@ -147,7 +147,7 @@ router.post('/', [
   body('description').optional().trim().isLength({ max: 1000 }).withMessage('Description must be less than 1000 characters'),
   body('priority').optional().isIn(['low', 'medium', 'high']).withMessage('Invalid priority'),
   body('dueDate').optional().isISO8601().withMessage('Invalid due date format'),
-  body('assignedUserId').optional().isUUID().withMessage('Invalid assigned user ID')
+  body('assignedUserId').optional().isMongoId().withMessage('Invalid assigned user ID')
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -162,40 +162,38 @@ router.post('/', [
 
     // Validate assigned user exists if provided
     if (assignedUserId) {
-      const assignedUser = await User.findByPk(assignedUserId);
+      const assignedUser = await User.findById(assignedUserId);
       if (!assignedUser) {
         return res.status(400).json({ message: 'Assigned user not found' });
       }
     }
 
-    const task = await Task.create({
+    const task = new Task({
       title,
       description,
       priority,
       dueDate: dueDate ? new Date(dueDate) : null,
-      assignedUserId,
-      createdBy: req.user.id
+      assignedUserId: assignedUserId || null,
+      createdBy: req.user._id
     });
 
-    // Fetch the created task with associations
-    const createdTask = await Task.findByPk(task.id, {
-      include: [
-        {
-          model: User,
-          as: 'assignedUser',
-          attributes: ['id', 'firstName', 'lastName', 'email']
-        },
-        {
-          model: User,
-          as: 'creator',
-          attributes: ['id', 'firstName', 'lastName', 'email']
-        }
-      ]
-    });
+    await task.save();
+
+    // Populate the created task
+    await task.populate('assignedUserId', 'firstName lastName email');
+    await task.populate('createdBy', 'firstName lastName email');
+
+    // Transform the populated data to match frontend expectations
+    const transformedTask = {
+      ...task.toObject(),
+      assignedUser: task.assignedUserId,
+      creator: task.createdBy,
+      id: task._id
+    };
 
     res.status(201).json({
       message: 'Task created successfully',
-      task: createdTask
+      task: transformedTask
     });
   } catch (error) {
     console.error('Create task error:', error);
@@ -213,7 +211,7 @@ router.put('/:id', [
   body('status').optional().isIn(['pending', 'in-progress', 'completed']).withMessage('Invalid status'),
   body('priority').optional().isIn(['low', 'medium', 'high']).withMessage('Invalid priority'),
   body('dueDate').optional().isISO8601().withMessage('Invalid due date format'),
-  body('assignedUserId').optional().isUUID().withMessage('Invalid assigned user ID')
+  body('assignedUserId').optional().isMongoId().withMessage('Invalid assigned user ID')
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -224,15 +222,19 @@ router.put('/:id', [
       });
     }
 
-    const task = await Task.findByPk(req.params.id);
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ message: 'Invalid task ID' });
+    }
+
+    const task = await Task.findById(req.params.id);
     if (!task) {
       return res.status(404).json({ message: 'Task not found' });
     }
 
     // Check if user has permission to update this task
     if (req.user.role !== 'admin' && 
-        task.assignedUserId !== req.user.id && 
-        task.createdBy !== req.user.id) {
+        (!task.assignedUserId || task.assignedUserId.toString() !== req.user._id.toString()) && 
+        task.createdBy.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: 'Access denied' });
     }
 
@@ -240,41 +242,37 @@ router.put('/:id', [
 
     // Validate assigned user exists if provided
     if (assignedUserId) {
-      const assignedUser = await User.findByPk(assignedUserId);
+      const assignedUser = await User.findById(assignedUserId);
       if (!assignedUser) {
         return res.status(400).json({ message: 'Assigned user not found' });
       }
     }
 
-    // Update task
-    await task.update({
-      ...(title && { title }),
-      ...(description !== undefined && { description }),
-      ...(status && { status }),
-      ...(priority && { priority }),
-      ...(dueDate !== undefined && { dueDate: dueDate ? new Date(dueDate) : null }),
-      ...(assignedUserId !== undefined && { assignedUserId })
-    });
+    // Update task fields
+    if (title !== undefined) task.title = title;
+    if (description !== undefined) task.description = description;
+    if (status !== undefined) task.status = status;
+    if (priority !== undefined) task.priority = priority;
+    if (dueDate !== undefined) task.dueDate = dueDate ? new Date(dueDate) : null;
+    if (assignedUserId !== undefined) task.assignedUserId = assignedUserId || null;
 
-    // Fetch updated task with associations
-    const updatedTask = await Task.findByPk(task.id, {
-      include: [
-        {
-          model: User,
-          as: 'assignedUser',
-          attributes: ['id', 'firstName', 'lastName', 'email']
-        },
-        {
-          model: User,
-          as: 'creator',
-          attributes: ['id', 'firstName', 'lastName', 'email']
-        }
-      ]
-    });
+    await task.save();
+
+    // Populate the updated task
+    await task.populate('assignedUserId', 'firstName lastName email');
+    await task.populate('createdBy', 'firstName lastName email');
+
+    // Transform the populated data to match frontend expectations
+    const transformedTask = {
+      ...task.toObject(),
+      assignedUser: task.assignedUserId,
+      creator: task.createdBy,
+      id: task._id
+    };
 
     res.json({
       message: 'Task updated successfully',
-      task: updatedTask
+      task: transformedTask
     });
   } catch (error) {
     console.error('Update task error:', error);
@@ -287,17 +285,21 @@ router.put('/:id', [
 // @access  Private
 router.delete('/:id', authenticate, async (req, res) => {
   try {
-    const task = await Task.findByPk(req.params.id);
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ message: 'Invalid task ID' });
+    }
+
+    const task = await Task.findById(req.params.id);
     if (!task) {
       return res.status(404).json({ message: 'Task not found' });
     }
 
     // Check if user has permission to delete this task
-    if (req.user.role !== 'admin' && task.createdBy !== req.user.id) {
+    if (req.user.role !== 'admin' && task.createdBy.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: 'Access denied. Only task creator or admin can delete tasks.' });
     }
 
-    await task.destroy();
+    await Task.findByIdAndDelete(req.params.id);
 
     res.json({ message: 'Task deleted successfully' });
   } catch (error) {
@@ -322,23 +324,28 @@ router.patch('/:id/status', [
       });
     }
 
-    const task = await Task.findByPk(req.params.id);
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ message: 'Invalid task ID' });
+    }
+
+    const task = await Task.findById(req.params.id);
     if (!task) {
       return res.status(404).json({ message: 'Task not found' });
     }
 
     // Check if user has permission to update this task
     if (req.user.role !== 'admin' && 
-        task.assignedUserId !== req.user.id && 
-        task.createdBy !== req.user.id) {
+        (!task.assignedUserId || task.assignedUserId.toString() !== req.user._id.toString()) && 
+        task.createdBy.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: 'Access denied' });
     }
 
-    await task.update({ status: req.body.status });
+    task.status = req.body.status;
+    await task.save();
 
     res.json({
       message: 'Task status updated successfully',
-      task: { id: task.id, status: task.status }
+      task: { id: task._id, status: task.status }
     });
   } catch (error) {
     console.error('Update task status error:', error);

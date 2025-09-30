@@ -9,7 +9,7 @@ const router = express.Router();
 // Generate JWT token
 const generateToken = (userId) => {
   return jwt.sign({ id: userId }, process.env.JWT_SECRET, {
-    expiresIn: process.env.JWT_EXPIRE
+    expiresIn: process.env.JWT_EXPIRE || '7d'
   });
 };
 
@@ -35,13 +35,13 @@ router.post('/register', [
     const { firstName, lastName, email, password, role = 'user' } = req.body;
 
     // Check if user already exists
-    const existingUser = await User.findOne({ where: { email } });
+    const existingUser = await User.findOne({ email });
     if (existingUser) {
       return res.status(400).json({ message: 'User already exists with this email' });
     }
 
     // Create new user
-    const user = await User.create({
+    const user = new User({
       firstName,
       lastName,
       email,
@@ -49,14 +49,16 @@ router.post('/register', [
       role
     });
 
+    await user.save();
+
     // Generate token
-    const token = generateToken(user.id);
+    const token = generateToken(user._id);
 
     res.status(201).json({
       message: 'User registered successfully',
       token,
       user: {
-        id: user.id,
+        id: user._id,
         firstName: user.firstName,
         lastName: user.lastName,
         email: user.email,
@@ -65,6 +67,9 @@ router.post('/register', [
     });
   } catch (error) {
     console.error('Registration error:', error);
+    if (error.code === 11000) {
+      return res.status(400).json({ message: 'User already exists with this email' });
+    }
     res.status(500).json({ message: 'Server error during registration' });
   }
 });
@@ -88,7 +93,7 @@ router.post('/login', [
     const { email, password } = req.body;
 
     // Find user by email
-    const user = await User.findOne({ where: { email } });
+    const user = await User.findOne({ email });
     if (!user) {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
@@ -105,13 +110,13 @@ router.post('/login', [
     }
 
     // Generate token
-    const token = generateToken(user.id);
+    const token = generateToken(user._id);
 
     res.json({
       message: 'Login successful',
       token,
       user: {
-        id: user.id,
+        id: user._id,
         firstName: user.firstName,
         lastName: user.lastName,
         email: user.email,
@@ -131,7 +136,7 @@ router.get('/me', authenticate, async (req, res) => {
   try {
     res.json({
       user: {
-        id: req.user.id,
+        id: req.user._id,
         firstName: req.user.firstName,
         lastName: req.user.lastName,
         email: req.user.email,

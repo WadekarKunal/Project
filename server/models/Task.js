@@ -1,75 +1,70 @@
-const { DataTypes } = require('sequelize');
-const sequelize = require('../config/database');
+const mongoose = require('mongoose');
 
-const Task = sequelize.define('Task', {
-  id: {
-    type: DataTypes.UUID,
-    defaultValue: DataTypes.UUIDV4,
-    primaryKey: true
-  },
+const taskSchema = new mongoose.Schema({
   title: {
-    type: DataTypes.STRING,
-    allowNull: false,
-    validate: {
-      notEmpty: true,
-      len: [3, 200]
-    }
+    type: String,
+    required: [true, 'Task title is required'],
+    trim: true,
+    minlength: [3, 'Title must be at least 3 characters'],
+    maxlength: [200, 'Title must be less than 200 characters']
   },
   description: {
-    type: DataTypes.TEXT,
-    allowNull: true
+    type: String,
+    trim: true,
+    maxlength: [1000, 'Description must be less than 1000 characters']
   },
   status: {
-    type: DataTypes.ENUM('pending', 'in-progress', 'completed'),
-    defaultValue: 'pending'
+    type: String,
+    enum: ['pending', 'in-progress', 'completed'],
+    default: 'pending'
   },
   priority: {
-    type: DataTypes.ENUM('low', 'medium', 'high'),
-    defaultValue: 'medium'
+    type: String,
+    enum: ['low', 'medium', 'high'],
+    default: 'medium'
   },
   dueDate: {
-    type: DataTypes.DATE,
-    allowNull: true,
+    type: Date,
     validate: {
-      isDate: true,
-      isAfter: new Date().toISOString().split('T')[0] // Must be today or future
+      validator: function(value) {
+        if (!value) return true; // Allow null/undefined
+        return value >= new Date().setHours(0, 0, 0, 0); // Must be today or future
+      },
+      message: 'Due date must be today or in the future'
     }
   },
   assignedUserId: {
-    type: DataTypes.UUID,
-    allowNull: true,
-    references: {
-      model: 'Users',
-      key: 'id'
-    }
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null
   },
   createdBy: {
-    type: DataTypes.UUID,
-    allowNull: false,
-    references: {
-      model: 'Users',
-      key: 'id'
-    }
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
   },
   completedAt: {
-    type: DataTypes.DATE,
-    allowNull: true
+    type: Date,
+    default: null
   }
 }, {
-  timestamps: true,
-  hooks: {
-    beforeUpdate: (task) => {
-      if (task.changed('status') && task.status === 'completed') {
-        task.completedAt = new Date();
-      } else if (task.changed('status') && task.status !== 'completed') {
-        task.completedAt = null;
-      }
-    }
-  }
+  timestamps: true
 });
 
-// Instance methods
-Task.prototype.getPriorityColor = function() {
+// Middleware to set completedAt when status changes to completed
+taskSchema.pre('save', function(next) {
+  if (this.isModified('status')) {
+    if (this.status === 'completed' && !this.completedAt) {
+      this.completedAt = new Date();
+    } else if (this.status !== 'completed') {
+      this.completedAt = null;
+    }
+  }
+  next();
+});
+
+// Instance method to get priority color
+taskSchema.methods.getPriorityColor = function() {
   const colors = {
     low: '#10B981',    // green
     medium: '#F59E0B', // yellow
@@ -78,9 +73,16 @@ Task.prototype.getPriorityColor = function() {
   return colors[this.priority] || colors.medium;
 };
 
-Task.prototype.isOverdue = function() {
+// Instance method to check if task is overdue
+taskSchema.methods.isOverdue = function() {
   if (!this.dueDate) return false;
   return new Date() > new Date(this.dueDate) && this.status !== 'completed';
 };
 
-module.exports = Task;
+// Index for better query performance
+taskSchema.index({ createdBy: 1, status: 1 });
+taskSchema.index({ assignedUserId: 1, status: 1 });
+taskSchema.index({ dueDate: 1, status: 1 });
+taskSchema.index({ title: 'text', description: 'text' });
+
+module.exports = mongoose.model('Task', taskSchema);

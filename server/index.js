@@ -5,12 +5,15 @@ const compression = require('compression');
 const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
-const { sequelize } = require('./models');
+const connectDB = require('./config/database');
 const authRoutes = require('./routes/auth');
 const taskRoutes = require('./routes/tasks');
 const userRoutes = require('./routes/users');
 
 const app = express();
+
+// Connect to MongoDB
+connectDB();
 
 // Security middleware
 app.use(helmet());
@@ -62,23 +65,6 @@ app.use('*', (req, res) => {
 
 const PORT = process.env.PORT || 5000;
 
-// Database connection and server start
-const startServer = async () => {
-  try {
-    await sequelize.authenticate();
-    console.log('Database connection established successfully.');
-    
-    // Sync database models
-    await sequelize.sync({ alter: true });
-    console.log('Database models synchronized.');
-    
-    app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
-    });
-  } catch (error) {
-    console.error('Unable to start server:', error);
-    process.exit(1);
-  }
-};
-
-startServer();
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
